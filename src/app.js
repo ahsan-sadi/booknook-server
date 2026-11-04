@@ -11,11 +11,35 @@ app.set("trust proxy", 1);
 // Covers are stored inline as JPEG data URLs, well past express.json's 100kb default.
 app.use(express.json({ limit: "2mb" }));
 
-const allowedOrigins = (process.env.CLIENT_URL || "http://localhost:3000")
-  .split(",")
-  .map((origin) => origin.trim())
-  .filter(Boolean);
-app.use(cors({ origin: allowedOrigins }));
+// Browser origins allowed to read API responses. The client runs on
+// http://localhost:3000 in development and on a Vercel URL in production, so
+// CLIENT_URL takes a comma-separated list. Entries are normalised on the way
+// in — a quoted or slash-terminated value (easy to paste in by accident) still
+// matches — an empty value or "*" means "any origin", and local dev is always
+// allowed so the API works before anything is configured.
+const parseOrigins = (value) =>
+  String(value || "")
+    .split(",")
+    .map((entry) => entry.trim().replace(/^["']|["']$/g, "").replace(/\/+$/, ""))
+    .filter(Boolean);
+
+const configuredOrigins = parseOrigins(process.env.CLIENT_URL);
+const allowAnyOrigin =
+  configuredOrigins.length === 0 || configuredOrigins.includes("*");
+const isLocalDev = (origin) =>
+  /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // No Origin header means same-origin or a non-browser client (curl, the
+      // server itself) — those are never blocked by CORS.
+      if (!origin || allowAnyOrigin || isLocalDev(origin) || configuredOrigins.includes(origin))
+        return callback(null, true);
+      callback(null, false);
+    },
+  }),
+);
 
 const LOAN_DAYS = 7;
 const DAY = 24 * 60 * 60 * 1000;
